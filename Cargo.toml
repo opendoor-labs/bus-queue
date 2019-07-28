@@ -10,7 +10,7 @@ readme = "README.md"
 
 [dependencies]
 lockfree = "^0.5.1"
-arc-swap = "0.3.6"
+atomic = {version = "0.1", git = "https://github.com/stjepang/atomic" }
 futures = {version = "0.1", optional = true}
 tokio = {version = "0.1", optional = true}
 

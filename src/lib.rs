@@ -126,9 +126,10 @@
 //! [`Result`]: ../../../std/result/enum.Result.html
 //! [`Err`]: ../../../std/result/enum.Result.html#variant.Err
 //! [`unwrap`]: ../../../std/result/enum.Result.html#method.unwrap
-extern crate arc_swap;
+extern crate atomic;
 extern crate lockfree;
-use arc_swap::{ArcSwap, ArcSwapOption};
+
+use atomic::atomic_arc::AtomicArc;
 use std::fmt;
 use std::iter::Iterator;
 pub use std::sync::mpsc::{RecvError, RecvTimeoutError, SendError, TryRecvError};
@@ -177,9 +178,8 @@ impl PartialEq for AtomicCounter {
 impl Eq for AtomicCounter {}
 
 /// Bare implementation of the publisher.
-#[derive(Debug)]
 pub struct BarePublisher<T: Send> {
-    buffer: Arc<Vec<ArcSwapOption<T>>>,
+    buffer: Arc<Vec<AtomicArc<T>>>,
     size: usize,
     wi: Arc<AtomicCounter>,
     sub_cnt: Arc<AtomicCounter>,
@@ -187,14 +187,26 @@ pub struct BarePublisher<T: Send> {
 }
 
 /// Bare implementation of the subscriber.
-#[derive(Debug)]
+
 pub struct BareSubscriber<T: Send> {
-    buffer: Arc<Vec<ArcSwapOption<T>>>,
+    buffer: Arc<Vec<AtomicArc<T>>>,
     wi: Arc<AtomicCounter>,
     ri: AtomicCounter,
     size: usize,
     sub_cnt: Arc<AtomicCounter>,
     is_pub_available: Arc<AtomicBool>,
+}
+
+impl<T: Send> fmt::Debug for BarePublisher<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "debug")
+    }
+}
+
+impl<T: Send> fmt::Debug for BareSubscriber<T> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "debug")
+    }
 }
 
 pub trait GetSubCount {
@@ -204,7 +216,9 @@ pub trait GetSubCount {
 pub fn bare_channel<T: Send>(size: usize) -> (BarePublisher<T>, BareSubscriber<T>) {
     let size = size + 1;
     let mut buffer = Vec::new();
-    buffer.resize(size, ArcSwapOption::new(None));
+    for _n in 0..size+1 {
+        buffer.push(AtomicArc::new(None));
+    }
     let buffer = Arc::new(buffer);
     let sub_cnt = Arc::new(AtomicCounter::new(1));
     let wi = Arc::new(AtomicCounter::new(0));
@@ -237,7 +251,7 @@ impl<T: Send> BarePublisher<T> {
         if self.sub_cnt.get() == 0 {
             return Err(SendError(object));
         }
-        self.buffer[self.wi.get() % self.size].store(Some(Arc::new(object)));
+        self.buffer[self.wi.get() % self.size].replace(Some(Arc::new(object)));
         self.wi.inc();
         Ok(())
     }
@@ -280,13 +294,13 @@ impl<T: Send> BareSubscriber<T> {
         }
 
         loop {
-            let val = self.buffer[self.ri.get() % self.size].load().unwrap();
+            let val = self.buffer[self.ri.get() % self.size].get();
 
             if self.wi.get() >= self.ri.get() + self.size {
                 self.ri.set(self.wi.get() - self.size + 1);
             } else {
                 self.ri.inc();
-                return Ok(val);
+                return Ok(val.clone_inner().unwrap());
             }
         }
     }
