@@ -1,41 +1,19 @@
 use super::*;
 use futures::prelude::*;
-use futures::{task::AtomicTask, Async, AsyncSink};
-use futures::sync::mpsc;
-use futures::task;
+use futures::{Async, AsyncSink};
 
 #[derive(Debug)]
 pub struct Publisher<T: Send> {
     bare_publisher: BarePublisher<T>,
-    waker: Waker<AtomicTask>,
 }
 #[derive(Debug)]
 pub struct Subscriber<T: Send> {
     bare_subscriber: BareSubscriber<T>,
-    sleeper: Sleeper<AtomicTask>,
 }
 
 pub fn channel<T: Send>(size: usize) -> (Publisher<T>, Subscriber<T>) {
     let (bare_publisher, bare_subscriber) = bare_channel(size);
-    let (waker, sleeper) = alarm(AtomicTask::new());
-    (
-        Publisher {
-            bare_publisher,
-            task: task::current(),
-            waker,
-        },
-        Subscriber {
-            bare_subscriber,
-            sleeper,
-        },
-    )
-}
-impl<T: Send> Publisher<T> {
-    fn wake_all(&self) {
-        for sleeper in self.waker.sleepers.iter() {
-            sleeper.notify();
-        }
-    }
+    (Publisher { bare_publisher }, Subscriber { bare_subscriber })
 }
 
 impl<T: Send> GetSubCount for Publisher<T> {
@@ -49,17 +27,17 @@ impl<T: Send> Sink for Publisher<T> {
     type SinkError = SendError<T>;
 
     fn start_send(&mut self, item: Self::SinkItem) -> StartSend<Self::SinkItem, Self::SinkError> {
-        self.waker.register_receivers();
-        self.bare_publisher.broadcast(item).map(|_| {
-            self.wake_all();
-            AsyncSink::Ready
-        })
+        self.bare_publisher.broadcast(item)?;
+        Ok(AsyncSink::Ready)
     }
+
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
+        futures::task::current().notify();
         Ok(Async::Ready(()))
     }
+
     fn close(&mut self) -> Poll<(), Self::SinkError> {
-        self.poll_complete()
+        Ok(Async::Ready(()))
     }
 }
 
@@ -86,7 +64,7 @@ impl<T: Send> Stream for Subscriber<T> {
             Ok(arc_object) => Ok(Async::Ready(Some(arc_object))),
             Err(error) => match error {
                 TryRecvError::Empty => {
-                    self.sleeper.sleeper.register();
+                    futures::task::current().notify();
                     Ok(Async::NotReady)
                 }
                 TryRecvError::Disconnected => Ok(Async::Ready(None)),
@@ -97,14 +75,8 @@ impl<T: Send> Stream for Subscriber<T> {
 
 impl<T: Send> Clone for Subscriber<T> {
     fn clone(&self) -> Self {
-        let arc_t = Arc::new(AtomicTask::new());
-        self.sleeper.sender.send(arc_t.clone());
         Self {
             bare_subscriber: self.bare_subscriber.clone(),
-            sleeper: Sleeper {
-                sender: self.sleeper.sender.clone(),
-                sleeper: arc_t.clone(),
-            },
         }
     }
 }
@@ -117,48 +89,52 @@ impl<T: Send> PartialEq for Subscriber<T> {
 
 impl<T: Send> Eq for Subscriber<T> {}
 
-/// Helper struct used by sync and async implementations to wake Tasks / Threads
-#[derive(Debug)]
-pub struct Waker<T> {
-    /// Vector of Tasks / Threads to be woken up.
-    pub sleepers: Vec<Arc<T>>,
-    /// A mpsc Receiver used to receive Tasks / Threads to be registered.
-    receiver: mpsc::Receiver<Arc<T>>,
-}
+#[cfg(test)]
+mod test {
+    use super::*;
+    use tokio::runtime::Runtime;
 
-/// Helper struct used by sync and async implementations to register Tasks / Threads to
-/// be woken up.
-#[derive(Debug)]
-pub struct Sleeper<T> {
-    /// Current Task / Thread to be woken up.
-    pub sleeper: Arc<T>,
-    /// mpsc Sender used to register Task / Thread.
-    pub sender: mpsc::Sender<Arc<T>>,
-}
+    #[test]
+    fn async_channel() {
+        let (tx, rx) = async_::channel(10);
 
-impl<T> Waker<T> {
-    /// Register all the Tasks / Threads sent for registration.
-    pub fn register_receivers(&mut self) -> impl Future<Item=()> {
-        for receiver in self.receiver.recv() {
-            self.sleepers.push(receiver);
-        }
+        let rx2 = rx.clone();
+        let rx3 = rx.clone();
+        let rx4 = rx.clone();
+
+        let pub_handle = std::thread::spawn(|| {
+            let mut rt = Runtime::new().unwrap();
+            let sent: Vec<_> = (1..15).collect();
+            let publisher = futures::stream::iter_ok(sent)
+                .forward(tx)
+                .and_then(|(_, mut sink)| sink.close())
+                .map_err(|_| ())
+                .map(|_| ());
+
+            rt.block_on(publisher)
+        });
+        pub_handle.join().unwrap().unwrap();
+
+        let sub_handle = std::thread::spawn(move || {
+            let mut rt = Runtime::new().unwrap();
+            // Only the last 10 elements are received because the subscribers started receiving late
+            let received: Vec<_> = rt.block_on(rx.map(|x| *x).collect()).unwrap();
+            let expected: Vec<_> = (5..15).collect();
+            assert_eq!(expected, received);
+
+            let received: Vec<_> = rt.block_on(rx2.map(|x| *x).collect()).unwrap();
+            let expected: Vec<_> = (5..15).collect();
+            assert_eq!(expected, received);
+
+            let received: Vec<_> = rt.block_on(rx3.map(|x| *x).collect()).unwrap();
+            let expected: Vec<_> = (5..15).collect();
+            assert_eq!(expected, received);
+
+            let received: Vec<_> = rt.block_on(rx4.map(|x| *x).collect()).unwrap();
+            let expected: Vec<_> = (5..15).collect();
+            assert_eq!(expected, received);
+        });
+
+        sub_handle.join().unwrap();
     }
-}
-
-/// Function used to create a ( Waker, Sleeper ) tuple.
-pub fn alarm<T>(current: T) -> (Waker<T>, Sleeper<T>) {
-    let mut vec = Vec::new();
-    let (sender, receiver) = mpsc::channel(10);
-    let arc_t = Arc::new(current);
-    vec.push(arc_t.clone());
-    (
-        Waker {
-            sleepers: vec,
-            receiver,
-        },
-        Sleeper {
-            sleeper: arc_t,
-            sender,
-        },
-    )
 }

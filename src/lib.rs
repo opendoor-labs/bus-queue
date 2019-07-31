@@ -127,11 +127,10 @@
 //! [`Err`]: ../../../std/result/enum.Result.html#variant.Err
 //! [`unwrap`]: ../../../std/result/enum.Result.html#method.unwrap
 extern crate arc_swap;
-extern crate lockfree;
-use arc_swap::{ArcSwap, ArcSwapOption};
+use arc_swap::ArcSwapOption;
 use std::fmt;
 use std::iter::Iterator;
-pub use std::sync::mpsc::{RecvError, RecvTimeoutError, SendError, TryRecvError};
+pub use std::sync::mpsc::{self, RecvError, RecvTimeoutError, SendError, TryRecvError};
 use std::sync::{atomic::AtomicBool, atomic::AtomicUsize, atomic::Ordering, Arc};
 
 struct AtomicCounter {
@@ -330,6 +329,52 @@ impl<T: Send> Iterator for BareSubscriber<T> {
     }
 }
 
+/// Helper struct used by sync and async implementations to wake Tasks / Threads
+#[derive(Debug)]
+pub struct Waker<T> {
+    /// Vector of Tasks / Threads to be woken up.
+    pub sleepers: Vec<Arc<T>>,
+    /// A mpsc Receiver used to receive Tasks / Threads to be registered.
+    receiver: mpsc::Receiver<Arc<T>>,
+}
+
+/// Helper struct used by sync and async implementations to register Tasks / Threads to
+/// be woken up.
+#[derive(Debug)]
+pub struct Sleeper<T> {
+    /// Current Task / Thread to be woken up.
+    pub sleeper: Arc<T>,
+    /// mpsc Sender used to register Task / Thread.
+    pub sender: mpsc::Sender<Arc<T>>,
+}
+
+impl<T> Waker<T> {
+    /// Register all the Tasks / Threads sent for registration.
+    pub fn register_receivers(&mut self) {
+        while let Some(receiver) = self.receiver.try_iter().next() {
+            self.sleepers.push(receiver);
+        }
+    }
+}
+
+/// Function used to create a ( Waker, Sleeper ) tuple.
+pub fn alarm<T>(current: T) -> (Waker<T>, Sleeper<T>) {
+    let mut vec = Vec::new();
+    let (sender, receiver) = mpsc::channel();
+    let arc_t = Arc::new(current);
+    vec.push(arc_t.clone());
+    (
+        Waker {
+            sleepers: vec,
+            receiver,
+        },
+        Sleeper {
+            sleeper: arc_t,
+            sender,
+        },
+    )
+}
+
 pub mod sync;
 #[cfg(feature = "async")]
 extern crate futures;
@@ -343,3 +388,5 @@ pub mod async_;
 pub mod async {
     pub use super::async_::*;
 }
+#[cfg(test)]
+extern crate tokio;
