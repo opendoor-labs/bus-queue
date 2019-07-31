@@ -94,7 +94,7 @@
 //!
 //! use bus_queue::async_;
 //! use futures::*;
-//! use tokio::runtime::Runtime;
+//! use tokio::runtime::current_thread::Runtime;
 //!
 //! fn main() {
 //!     let mut rt = Runtime::new().unwrap();
@@ -328,52 +328,6 @@ impl<T: Send> Iterator for BareSubscriber<T> {
     fn next(&mut self) -> Option<Self::Item> {
         self.try_recv().ok()
     }
-}
-
-/// Helper struct used by sync and async implementations to wake Tasks / Threads
-#[derive(Debug)]
-pub struct Waker<T> {
-    /// Vector of Tasks / Threads to be woken up.
-    pub sleepers: Vec<Arc<T>>,
-    /// A mpsc Receiver used to receive Tasks / Threads to be registered.
-    receiver: lockfree::channel::mpsc::Receiver<Arc<T>>,
-}
-
-/// Helper struct used by sync and async implementations to register Tasks / Threads to
-/// be woken up.
-#[derive(Debug)]
-pub struct Sleeper<T> {
-    /// Current Task / Thread to be woken up.
-    pub sleeper: Arc<T>,
-    /// mpsc Sender used to register Task / Thread.
-    pub sender: lockfree::channel::mpsc::Sender<Arc<T>>,
-}
-
-impl<T> Waker<T> {
-    /// Register all the Tasks / Threads sent for registration.
-    pub fn register_receivers(&mut self) {
-        for receiver in self.receiver.recv() {
-            self.sleepers.push(receiver);
-        }
-    }
-}
-
-/// Function used to create a ( Waker, Sleeper ) tuple.
-pub fn alarm<T>(current: T) -> (Waker<T>, Sleeper<T>) {
-    let mut vec = Vec::new();
-    let (sender, receiver) = lockfree::channel::mpsc::create();
-    let arc_t = Arc::new(current);
-    vec.push(arc_t.clone());
-    (
-        Waker {
-            sleepers: vec,
-            receiver,
-        },
-        Sleeper {
-            sleeper: arc_t,
-            sender,
-        },
-    )
 }
 
 pub mod sync;
