@@ -231,7 +231,6 @@ impl<T: Send> BarePublisher<T> {
     /// Publishes values to the circular buffer at wi % size
     /// # Arguments
     /// * `object` - owned object to be published
-
     pub fn broadcast(&self, object: T) -> Result<(), SendError<T>> {
         if self.sub_cnt.get() == 0 {
             return Err(SendError(object));
@@ -377,9 +376,12 @@ pub fn alarm<T>(current: T) -> (Waker<T>, Sleeper<T>) {
 
 pub mod sync;
 #[cfg(feature = "async")]
+#[macro_use]
 extern crate futures;
 #[cfg(feature = "async")]
 pub mod async_;
+#[cfg(feature = "async")]
+pub mod async_pubsub;
 #[cfg(feature = "async")]
 #[deprecated(
     since = "0.3.8",

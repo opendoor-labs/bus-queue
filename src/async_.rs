@@ -32,7 +32,6 @@ impl<T: Send> Sink for Publisher<T> {
     }
 
     fn poll_complete(&mut self) -> Poll<(), Self::SinkError> {
-        futures::task::current().notify();
         Ok(Async::Ready(()))
     }
 
