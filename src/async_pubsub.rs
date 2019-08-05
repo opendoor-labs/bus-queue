@@ -12,11 +12,11 @@ pub fn channel<T: Send>(size: usize) -> (TopicPublisher<T>, TopicSubscriber<T>) 
 
 pub struct TopicPayload<T> {
     topic: T,
-    message: Box<dyn Any + Send>,
+    message: Box<dyn Any + Send + Sync>,
 }
 
 impl<T> TopicPayload<T> {
-    pub fn new<M: Any + Send>(topic: T, message: M) -> Self {
+    pub fn new<M: Any + Send + Sync>(topic: T, message: M) -> Self {
         Self {
             topic,
             message: Box::new(message),
