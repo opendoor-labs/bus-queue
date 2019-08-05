@@ -389,6 +389,7 @@ pub mod async_pubsub;
 )]
 pub mod async {
     pub use super::async_::*;
+    pub use super::async_pubsub::*;
 }
 #[cfg(test)]
 extern crate tokio;

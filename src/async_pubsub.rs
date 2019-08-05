@@ -16,14 +16,14 @@ pub struct TopicPayload<T> {
 }
 
 impl<T> TopicPayload<T> {
-    fn new<M: Any + Send>(topic: T, message: M) -> Self {
+    pub fn new<M: Any + Send>(topic: T, message: M) -> Self {
         Self {
             topic,
             message: Box::new(message),
         }
     }
 
-    fn downcast_cloned<U>(&self) -> Option<U>
+    pub fn downcast_cloned<U>(&self) -> Option<U>
     where
         U: Clone + 'static,
     {
