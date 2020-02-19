@@ -1,7 +1,8 @@
 use crate::channel::{bounded as raw_bounded, Receiver, SendError, Sender, TryRecvError};
 use crossbeam_channel as mpsc;
 use futures::task::AtomicWaker;
-use futures::{task, Poll, Sink, Stream};
+use futures::{task, Sink, Stream};
+use futures_core::task::Poll;
 use std::pin::Pin;
 use std::sync::Arc;
 
